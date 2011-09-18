@@ -32,6 +32,7 @@ class Bot(object):
     worker_pool = []
     total_workers = 0
     idle_workers = 0
+    config = None
     
     default_config = dict({
         'SERVER': 'irc.voxinfinitus.net',
@@ -48,7 +49,8 @@ class Bot(object):
         })
     
     def __init__(self):
-        self.config = Config(self.root_path, self.default_config)
+        if not self.config:
+            self.config = Config(self.root_path, self.default_config)
     
     def __new__(cls, *args, **kwargs):
         '''Here we override the `__new__` method in order to achieve a 
@@ -182,7 +184,7 @@ class Bot(object):
                 message = func()
             
             if message:
-                self.reply(message, plugin_context.line, action, notice)
+                self._reply(message, plugin_context.line, action, notice)
     
     def _parse_input(self, prefix='.', wait=0.01):
         '''This internal method handles the parsing of commands and events.
@@ -308,79 +310,7 @@ class Bot(object):
                         
             time.sleep(wait)
     
-    def command(self, hook=None, **kwargs):
-        '''This method provides a decorator that can be used to load a 
-        function into the global plugins list.:
-        
-        If the `hook` parameter is provided the decorator will assign the hook 
-        key to the value of `hook`, update the `plugin` dict, and then return 
-        the wrapped function to the wrapper.
-        
-        Therein the plugin dictionary is updated with the `func` key whose 
-        value is set to the wrapped function.
-        
-        Otherwise if no `hook` parameter is passed the, `hook` is assumed to 
-        be the wrapped function and handled accordingly.
-        '''
-        
-        plugin = {}
-        
-        def wrapper(func):
-            plugin.setdefault('hook', func.func_name)
-            plugin['funcs'] = [func]
-            plugin['help'] = func.__doc__ if func.__doc__ else 'no help provided'
-            self._update_plugins(plugin, 'PLUGINS')
-            return func
-        
-        if kwargs or not inspect.isfunction(hook):
-            if hook:
-                plugin['hook'] = hook
-            plugin.update(kwargs)
-            return wrapper
-        else:
-            return wrapper(hook)
-    
-    def event(self, hook, **kwargs):
-        '''This method provides a decorator that can be used to load a 
-        function into the global events list.
-        
-        It assumes one parameter, `hook`, i.e. the event you wish to bind 
-        this wrapped function to. For example, JOIN, which would call the 
-        function on all JOIN events.
-        '''
-        
-        plugin = {}
-        
-        def wrapper(func):
-            plugin['funcs'] = [func]
-            self._update_plugins(plugin, 'EVENTS')
-            return func
-        
-        plugin['hook'] = hook
-        plugin.update(kwargs)
-        return wrapper
-    
-    def add_command(self, hook, func):
-        '''TODO'''
-        
-        self._add_plugin(hook, func, command=True)
-    
-    def add_event(self, hook, func):
-        '''TODO'''
-        
-        self._add_plugin(hook, func, event=True)
-    
-    def remove_command(self, hook, func):
-        '''TODO'''
-        
-        self._remove_plugin(hook, func, command=True)
-    
-    def remove_event(self, hook, func):
-        '''TODO'''
-        
-        self._remove_plugin(hook, func, event=True)
-    
-    def reply(self, message, context, action=False, notice=False, line_limit=400):
+    def _reply(self, message, context, action=False, notice=False, line_limit=400):
         '''TODO'''
         
         if context['sender'].startswith('#'):
