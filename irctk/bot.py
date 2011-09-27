@@ -10,7 +10,7 @@ import time
 import inspect
 import thread
 
-from .logging import create_logger
+from .logging import create_logger, set_logfiles
 from .config import Config
 from .reloader import ReloadHandler
 from .plugins import PluginHandler
@@ -23,17 +23,21 @@ class Bot(object):
     logger = create_logger()
     
     default_config = dict({
-        'SERVER'      : 'irc.voxinfinitus.net',
-        'PORT'        : 6697,
-        'SSL'         : True,
-        'TIMEOUT'     : 300,
-        'NICK'        : 'Kaa',
-        'REALNAME'    : 'Kaa the rock python',
-        'CHANNELS'    : ['#voxinfinitus'],
-        'PLUGINS'     : [],
-        'EVENTS'      : [],
-        'MAX_WORKERS' : 7,
-        'MIN_WORKERS' : 3,
+        'SERVER'            : 'irc.voxinfinitus.net',
+        'PORT'              : 6697,
+        'SSL'               : True,
+        'TIMEOUT'           : 300,
+        'NICK'              : 'Kaa',
+        'REALNAME'          : 'Kaa the rock python',
+        'CHANNELS'          : ['#voxinfinitus'],
+        'PLUGINS'           : [],
+        'EVENTS'            : [],
+        'MAX_WORKERS'       : 7,
+        'MIN_WORKERS'       : 3,
+        'LOG_TO_FILE'       : False,
+        'LOGFILE_DIR'       : os.path.join(root_path, 'logs'),
+        'MAX_LOGFILE_SIZE'  : 5 * 1024 * 1024, # 5MB
+        'DEBUG_TO_LOG'      : False,
         })
     
     def __init__(self):
@@ -207,10 +211,13 @@ class Bot(object):
             self.irc.send_message(recipient, message, action, notice)
     
     def run(self, wait=0.01):
+        if self.config['LOG_TO_FILE']:
+            self.config['LOGFILE_DIR'] = os.path.abspath(self.config['LOGFILE_DIR'])
+            set_logfiles(self.config)
         self._create_connection() # updates to the latest config
         
         self.connection.connect()
-        self.irc.run() 
+        self.irc.run()
         
         thread.start_new_thread(self._parse_input, ())
         
