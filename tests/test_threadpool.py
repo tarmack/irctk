@@ -2,12 +2,18 @@ import unittest
 
 from irctk.threadpool import ThreadPool, Worker
 
+import Queue
+import time
+
 
 class WorkerTestCase(unittest.TestCase):
     '''This test case tests the Worker class methods.'''
     
     def setUp(self):
-        self.tasks = [1, 2, 3]
+        self.tasks = Queue.Queue()
+        for x in range(3):
+            self.tasks.put((_worker_test_funct,
+                    (self, 'testString'), {'c': False}))
         self.logger = None
         self.worker = Worker(self.tasks, self.logger)
         
@@ -18,6 +24,11 @@ class WorkerTestCase(unittest.TestCase):
         pass
 
 
+def _worker_test_funct(a, b, c=None, d=True):
+    a.assertEquals(b, 'testString')
+    a.assertEquals(c, False)
+    a.assertEquals(d, True)
+
 class ThreadPoolTestCase(unittest.TestCase):
     '''This test case tests the ThreadPool class methods.'''
     
@@ -25,6 +36,8 @@ class ThreadPoolTestCase(unittest.TestCase):
         self.workers = 3
         self.logger = None
         self.tp = ThreadPool(self.workers, self.logger)
+        # Give the htread pool time to get up to speed.
+        time.sleep(0.3)
         
         self.assertEquals(self.tp.workers, 3)
         self.assertEquals(self.tp.logger, None)
@@ -36,7 +49,6 @@ class ThreadPoolTestCase(unittest.TestCase):
         task = self.tp.tasks.get()
         self.assertEquals(('foo', ('bar',), {}), task)
         
-        test = 'test'
         self.tp.enqueue_task('foo', 'bar', test=True)
         task = self.tp.tasks.get()
         self.assertEquals(('foo', ('bar',), {'test': True}), task)
