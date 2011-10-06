@@ -31,47 +31,16 @@ def create_logger():
 
 def set_logfiles(config):
     logger = logging.getLogger('irctk')
-    if config['LOGFILE_DIR']:
-        if not os.path.exists(config['LOGFILE_DIR']):
-            mess = _make_log_dir(config['LOGFILE_DIR'])
-            if mess is not None:
-                logger.error(mess)
-                return
-        
-        formatter = logging.Formatter(FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
-        
-        error_file = os.path.join(config['LOGFILE_DIR'], config['SERVER'] + '.errors')
-        error_handler = LogFileHandler(error_file,
-                maxBytes=config['MAX_LOGFILE_SIZE'],
-                backupCount=2)
-        error_handler.setLevel(logging.ERROR)
-        error_handler.setFormatter(formatter)
-        logger.addHandler(error_handler)
-        
-        message_file = os.path.join(config['LOGFILE_DIR'], config['SERVER'] + '.log')
-        message_handler = MessageHandler(config, message_file,
-                maxBytes=config['MAX_LOGFILE_SIZE'])
-        message_handler.setLevel(logging.INFO)
-        message_handler.setFormatter(formatter)
-        logger.addHandler(message_handler)
-        
-        for channel in config['CHANNELS']:
-            channel_file = os.path.join(config['LOGFILE_DIR'], channel + '.log')
-            channel_handler = ChannelHandler(channel, channel_file,
-                maxBytes=config['MAX_LOGFILE_SIZE'])
-            channel_handler.setLevel(logging.INFO)
-            channel_handler.setFormatter(formatter)
-            logger.addHandler(channel_handler)
-        
-        if config['DEBUG_TO_LOG']:
-            debug_file = os.path.join(config['LOGFILE_DIR'], config['SERVER'] + '.debug')
-            debug_handler = LogFileHandler(debug_file,
-                    maxBytes=config['MAX_LOGFILE_SIZE'],
-                    backupCount=2)
-            debug_handler.setLevel(logging.DEBUG)
-            debug_handler.setFormatter(formatter)
-            logger.addHandler(debug_handler)
-
+    if not config['LOGFILE_DIR']:
+        return
+    if not os.path.exists(config['LOGFILE_DIR']):
+        mess = _make_log_dir(config['LOGFILE_DIR'])
+        if mess is not None:
+            logger.error(mess)
+            return
+    
+    message_handler = MessageHandler(config, maxBytes=config['MAX_LOGFILE_SIZE'])
+    logger.addHandler(message_handler)
 
 def _make_log_dir(path):
     done = '/'
@@ -82,11 +51,16 @@ def _make_log_dir(path):
         if not os.path.exists(done):
             try:
                 os.mkdir(done)
-            except:
-                return 'Could not create directory {0}.'.format(done)
+            except Exception, e:
+                return 'Could not create log directory {0}.'.format(done, e)
 
 
 class LogFileHandler(RotatingFileHandler):
+    '''
+    This is the handler for our logfiles. It is the basic RotatingFileHandler
+    but it never destroys the logs. The logs get gzipped to safe space after
+    two generations.
+    '''
     
     def _tar_logs(self):
         '''Looks for old log files from this handler and tars them.'''
@@ -105,52 +79,99 @@ class LogFileHandler(RotatingFileHandler):
             
             try:
                 plain = open(filename, 'rb')
-            except IOError:
+            except IOError, e:
+                print "An error occurred while opening the file '{0}' to gzip it.\n\t{1}".format(filename, e)
                 return
             try:
                 compressed = gzip.open(filename + '.gz', 'wb')
-            except IOError:
+            except IOError, e:
+                print "An error occurred while opening the file '{0}' to gzip it.\n\t{1}".format(filename + '.gz', e)
                 plain.close()
                 return
             try:
                 compressed.writelines(plain)
+            except IOError, e:
+                print "An error occurred while gzipping the file '{0}'.\n\t{1}".format(filename, e)
             finally:
                 plain.close()
                 compressed.close()
             try:
                 os.remove(filename)
-            except IOError:
-                print 'Failed to remove old log file.'
-                pass
+            except IOError, e:
+                print 'Failed to remove the original log file ({0}) after gzipping it.\n\t{1}'.format(filename, e)
     
     def doRollover(self):
-        print 'doing rollover of file:', self.baseFilename
+        '''
+        This method gets called when the file is about to grow bigger than
+        maxBytes. We use it to gzip older log backups.
+        '''
+        print 'doing rollover of logfile: {0}'.format(self.baseFilename)
         RotatingFileHandler.doRollover(self)
         self._tar_logs()
 
 
-class ChannelHandler(LogFileHandler):
-    def __init__(self, channel, filename, maxBytes=0):
-        LogFileHandler.__init__(self, filename, maxBytes=maxBytes, backupCount=2)
-        self.channel = channel
-    
-    def emit(self, record):
-        message = record.getMessage()
-        if self.channel in message and not 'ERROR' in message:
-            LogFileHandler.emit(self, record)
-
-
 class MessageHandler(LogFileHandler):
-    def __init__(self, config, filename, maxBytes=0):
-        LogFileHandler.__init__(self, filename, maxBytes=maxBytes, backupCount=2)
+    '''
+    This class is used as the main logfile handler. It distributes the messages
+    it gets to a multitude of logfiles according to their content.
+
+    The messages are split over the logfiles as follows:
+    * Private messages from and to a user get logged to one file per user.
+    * Messages in a channel get logged to a file specific to that channel.
+    * Errors get logged to the error log.
+    * All other messages go to the main logfile.
+    * Additionally messages from the server about channels get logged to both
+      the main logfile and the channel specific logfile.
+    * If DEBUG_TO_LOG is set all messages get copied to the debug file.
+    '''
+    
+    def __init__(self, config, maxBytes=0):
         self.config = config
         self.users = {}
+        self.channels = {}
+        
+        # Setup the main logfile.
+        formatter = logging.Formatter(FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
+        message_file = os.path.join(config['LOGFILE_DIR'], config['SERVER'] + '.log')
+        LogFileHandler.__init__(self, message_file, maxBytes=maxBytes, backupCount=2)
+        self.setLevel(logging.INFO)
+        self.setFormatter(formatter)
+        
+        # Setup the error logfile.
+        error_file = os.path.join(config['LOGFILE_DIR'], config['SERVER'] + '.errors')
+        self.error_handler = LogFileHandler(error_file,
+                maxBytes=config['MAX_LOGFILE_SIZE'],
+                backupCount=2)
+        self.error_handler.setLevel(logging.ERROR)
+        self.error_handler.setFormatter(formatter)
+        
+        # Setup and collect the channel logfiles
+        for channel in config['CHANNELS']:
+            channel_file = os.path.join(config['LOGFILE_DIR'], channel + '.log')
+            channel_handler = LogFileHandler(channel_file,
+                maxBytes=config['MAX_LOGFILE_SIZE'],
+                backupCount=2)
+            channel_handler.setLevel(logging.INFO)
+            channel_handler.setFormatter(formatter)
+            self.channels[channel] = channel_handler
+        
+        # When DEBUG_TO_LOG is set, setup the debug logfile.
+        self.debug_handler = None
+        if config['DEBUG_TO_LOG']:
+            debug_file = os.path.join(config['LOGFILE_DIR'], config['SERVER'] + '.debug')
+            self.debug_handler = LogFileHandler(debug_file,
+                    maxBytes=config['MAX_LOGFILE_SIZE'],
+                    backupCount=2)
+            self.debug_handler.setLevel(logging.DEBUG)
+            self.debug_handler.setFormatter(formatter)
     
     def _log_private(self, user, record):
+        '''Logs the message to the logfile for `user`.'''
         handler = self._get_user_log(user)
         handler.emit(record)
     
     def _get_user_log(self, user):
+        '''Returns the logfile for `user` it is created if it does not exist.'''
         if not user in self.users:
             filename = os.path.join(self.config['LOGFILE_DIR'], user + '.log')
             handler = LogFileHandler(filename, maxBytes=self.maxBytes, backupCount=2)
@@ -160,21 +181,24 @@ class MessageHandler(LogFileHandler):
         return self.users[user]
     
     def emit(self, record):
+        '''Determine the correct destination logfile and write the message to it.'''
         message = record.getMessage()
+        if self.debug_handler:
+            self.debug_handler.emit(record)
         if 'PRIVMSG' in message:
             index = message.index('PRIVMSG') + 8
-            user = message[index:].split()[0]
-            if user == self.config['NICK']:
-                user = message[1:].split('!')[0]
-            self._log_private(user, record)
-        elif 'ERROR' in message:
-            return
+            target = message[index:].split()[0]
+            if target == self.config['NICK']:
+                target = message[1:].split('!')[0]
+            if target in self.channels:
+                self.channels[target].emit(record)
+            else:
+                self._log_private(target, record)
+        elif record.levelname == 'ERROR':
+            self.error_handler.emit(record)
         else:
-            do_log = True
-            for channel in self.config['CHANNELS']:
+            LogFileHandler.emit(self, record)
+            for channel in self.channels:
                 if channel in message:
-                    do_log = False
-                    break
-            if do_log:
-                LogFileHandler.emit(self, record)
+                    self.channels[channel].emit(record)
 
